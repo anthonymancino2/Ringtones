@@ -341,7 +341,7 @@ const MAX = 29;            // stay under Apple's 30s ringtone cap with margin: a
                             // exactly 30.0s can measure slightly over after encoding (frame
                             // padding, recorder tail padding below) and gets silently rejected
 const BIN = 0.01;         // seconds per waveform bin
-const BUILD = '2026-09-30 22:26 UTC';
+const BUILD = '2026-09-30 22:56 UTC';
 
 /* ---------- force-update button + live version badge ---------- */
 (function(){
@@ -659,6 +659,60 @@ function sliceAudio(){
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+function encodeWav(L, R, sr){
+  const n = L.length, numChannels = 2, bytesPerSample = 2, blockAlign = numChannels*bytesPerSample;
+  const dataSize = n*blockAlign;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const dv = new DataView(buf);
+  const writeStr = (o, s) => { for(let i=0;i<s.length;i++) dv.setUint8(o+i, s.charCodeAt(i)); };
+  writeStr(0,'RIFF'); dv.setUint32(4, 36+dataSize, true); writeStr(8,'WAVE');
+  writeStr(12,'fmt '); dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,numChannels,true);
+  dv.setUint32(24,sr,true); dv.setUint32(28, sr*blockAlign, true); dv.setUint16(32, blockAlign, true); dv.setUint16(34, 16, true);
+  writeStr(36,'data'); dv.setUint32(40, dataSize, true);
+  let o = 44;
+  for(let i=0;i<n;i++){
+    const l = Math.max(-1, Math.min(1, L[i])), r = Math.max(-1, Math.min(1, R[i]));
+    dv.setInt16(o, Math.round(l < 0 ? l*32768 : l*32767), true); o += 2;
+    dv.setInt16(o, Math.round(r < 0 ? r*32768 : r*32767), true); o += 2;
+  }
+  return new Uint8Array(buf);
+}
+
+let ffmpegInstance = null;
+// ffmpeg.wasm is the same encoder countless working "make an M4R" tools already rely on -- it's the
+// most battle-tested way to guarantee a genuinely standards-conformant AAC stream, removing any doubt
+// about subtle non-conformance in a hand-rolled WebCodecs+muxer pipeline that Apple's own ringtone
+// validation might be pickier about than a general audio player.
+async function encodeFFmpeg(L, R, sr, progress, onStage){
+  // Self-hosted (vendor/) rather than loaded from a CDN: FFmpeg runs inside its own dedicated Worker,
+  // and that worker script has its own further relative imports (./const.js, ./errors.js, ...). A
+  // cross-origin worker script gets blocked outright, and even wrapping just the entry file in a blob
+  // URL breaks those relative imports (a blob: URL has no directory to resolve them against). Serving
+  // the whole module tree same-origin sidesteps both problems at once.
+  const [{FFmpeg}] = await Promise.all([
+    import('./vendor/ffmpeg/dist/esm/index.js'),
+  ]);
+  if(!ffmpegInstance){
+    onStage('Loading converter engine (first time only, ~30MB)…');
+    ffmpegInstance = new FFmpeg();
+    ffmpegInstance.on('progress', ({progress:p}) => progress(Math.max(0, Math.min(.98, p))));
+    await ffmpegInstance.load({
+      // Absolute, not relative: FFmpeg resolves these against its own module's URL (inside
+      // vendor/ffmpeg/dist/esm/), not the page's, so a relative path here silently doubles up.
+      coreURL: new URL('./vendor/ffmpeg-core/dist/esm/ffmpeg-core.js', location.href).href,
+      wasmURL: new URL('./vendor/ffmpeg-core/dist/esm/ffmpeg-core.wasm', location.href).href,
+      classWorkerURL: new URL('./vendor/ffmpeg/dist/esm/worker.js', location.href).href,
+    });
+  }
+  onStage('Making your ringtone…');
+  const wav = encodeWav(L, R, sr);
+  await ffmpegInstance.writeFile('in.wav', wav);
+  await ffmpegInstance.exec(['-i','in.wav','-c:a','aac','-b:a','128k','-ar','44100','-ac','2','-movflags','+faststart','out.m4a']);
+  const data = await ffmpegInstance.readFile('out.m4a');
+  try{ await ffmpegInstance.deleteFile('in.wav'); await ffmpegInstance.deleteFile('out.m4a'); }catch(_){}
+  return data.slice().buffer; // copy out: readFile's view may be into a larger/shared buffer
+}
+
 async function encodeWebCodecs(L, R, sr, progress){
   if(!('AudioEncoder' in window) || !('AudioData' in window) || !window.Mp4Muxer) throw new Error('no-webcodecs');
   const cfg = {codec:'mp4a.40.2', sampleRate:sr, numberOfChannels:2, bitrate:128000};
@@ -763,23 +817,25 @@ $('makeBtn').addEventListener('click', async () => {
   try{
     const {L, R, sr, seconds} = sliceAudio();
     let buf, usedPath;
-    // WebCodecs + mp4-muxer (fastStart:'in-memory') writes a traditional flat MP4 with a complete
-    // sample table up front -- the same structure GarageBand/iTunes-era ringtones have always used.
-    // MediaRecorder's MP4 output is built incrementally as chunks arrive, which makes it a fragmented
-    // MP4 (moov with empty tables + moof/mdat fragments). Both are valid, playable MP4, but iOS's
-    // ringtone import/preview path is pickier than a general media player: a fragmented file can get
-    // accepted into the Ringtone list (lenient check) yet fail on actual preview/ring playback,
-    // silently keeping whatever tone was already active. So prefer the flat-MP4 path here and only
-    // fall back to the recorder for browsers that can't do WebCodecs AAC at all.
+    // ffmpeg.wasm first: it's the same AAC encoder/muxer countless working ringtone tools already use,
+    // which rules out any subtle non-conformance in a hand-rolled encoder that Apple's own ringtone
+    // validation might be pickier about than a general audio player. If it can't load (e.g. the CDN is
+    // blocked), fall back to the lighter browser-native paths.
     try{
-      $('makingText').textContent = 'Making your ringtone…';
-      buf = await encodeWebCodecs(L, R, sr, progress);
-      usedPath = 'webcodecs';
-    }catch(e1){
-      console.warn('WebCodecs path failed, trying recorder', e1);
-      $('makingText').textContent = 'Making your ringtone… this takes about ' + Math.ceil(seconds) + ' seconds. Keep this screen open!';
-      buf = await encodeRecorder(L, R, sr, progress, seconds);
-      usedPath = 'recorder';
+      buf = await encodeFFmpeg(L, R, sr, progress, stage => { $('makingText').textContent = stage; });
+      usedPath = 'ffmpeg';
+    }catch(e0){
+      console.warn('ffmpeg.wasm path failed, trying WebCodecs', e0);
+      try{
+        $('makingText').textContent = 'Making your ringtone…';
+        buf = await encodeWebCodecs(L, R, sr, progress);
+        usedPath = 'webcodecs';
+      }catch(e1){
+        console.warn('WebCodecs path failed, trying recorder', e1);
+        $('makingText').textContent = 'Making your ringtone… this takes about ' + Math.ceil(seconds) + ' seconds. Keep this screen open!';
+        buf = await encodeRecorder(L, R, sr, progress, seconds);
+        usedPath = 'recorder';
+      }
     }
     progress(1);
     if(resultUrl) URL.revokeObjectURL(resultUrl);

@@ -7,8 +7,8 @@ Turn an iPhone screen recording (or any video/audio clip) into a real iPhone rin
 ## What it does
 
 1. **Pick a video or audio file** — including screen recordings straight from your Photos app.
-2. **Trim it** on a live, glowing waveform. Drag the region or its handles; ringtones are capped at 30 seconds, which is Apple's hard limit.
-3. **Convert** the selection to AAC audio in an `.m4r`/`.m4a` container, using `AudioEncoder`/WebCodecs when available, with an automatic `MediaRecorder` fallback for browsers that don't support it.
+2. **Trim it** on a live, glowing waveform. Drag the region or its handles; ringtones are capped at 29 seconds — just under Apple's 30s hard limit, since a clip timed at exactly 30.0s can measure slightly over after encoding and get silently rejected.
+3. **Convert** the selection to AAC audio in a proper `.m4r`/`.m4a` container using a bundled copy of [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm) — the same encoder countless working "make an M4R" tools rely on, run entirely client-side. (Lighter browser-native paths — WebCodecs, then `MediaRecorder` — are kept as a fallback if ffmpeg.wasm can't load.)
 4. **Save it** — either through the native iOS share sheet (AirDrop, Files, Messages, Mail) or as a direct download.
 
 Everything happens on-device. The file never leaves your phone or computer.
@@ -28,8 +28,10 @@ Both paths are spelled out step-by-step in the app itself once your ringtone is 
 
 Works best in current **Safari on iPhone/iPad** and desktop **Chrome/Edge/Safari**. Needs:
 - `AudioContext.decodeAudioData` (universal) to read the audio out of your video.
-- `AudioEncoder` (WebCodecs) for fast, high-quality AAC encoding — falls back automatically to `MediaRecorder` if unavailable.
+- WebAssembly + module Workers, to run the bundled ffmpeg.wasm encoder (broadly supported everywhere; falls back to `AudioEncoder`/WebCodecs, then `MediaRecorder`, if it can't load).
 - `navigator.share` with file support for the one-tap "Save to my iPhone" flow — falls back to a plain download link otherwise.
+
+The result screen shows a small debug line (encoder used, container structure, declared duration) — useful if a ringtone ever gets accepted into iOS's Ringtone list but won't actually play.
 
 ## Running it locally
 
@@ -43,9 +45,9 @@ Then open `http://localhost:8000`.
 
 ## Tech notes
 
-- Single-file app (`index.html`) — no framework, no bundler.
+- `index.html` — no framework, no bundler; the only "build step" for the app itself is none.
 - Audio decode/trim/waveform: Web Audio API + Canvas.
-- Encoding: [`mp4-muxer`](https://github.com/Vanilagy/mp4-muxer) (loaded from jsDelivr) muxes raw AAC frames from `AudioEncoder` into a valid `.m4a`/`.m4r` container.
+- Encoding: a self-hosted copy of [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm) under `vendor/` (not loaded from a CDN — its worker script has further relative imports that break once cross-origin, so the whole module tree is served same-origin). Fallback paths: WebCodecs `AudioEncoder` + [`mp4-muxer`](https://github.com/Vanilagy/mp4-muxer), then `MediaRecorder`.
 - No backend, no analytics, no data collection.
 
 ## License
