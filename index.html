@@ -211,6 +211,18 @@ details li{margin:6px 0; font-size:16px}
   box-shadow:0 8px 20px -10px rgba(0,0,0,.5);
 }
 .buildTag{display:block; margin-top:2px; font-size:12px; color:var(--muted); opacity:.7; letter-spacing:.02em}
+.verBadge{
+  display:inline-flex; align-items:center; gap:6px; margin-top:8px; padding:5px 10px 5px 8px;
+  border:1px solid var(--line); border-radius:999px; background:var(--wavebg); color:var(--muted);
+  font-size:12px; font-weight:600; letter-spacing:.02em;
+}
+.verBadge .dot{width:7px; height:7px; border-radius:50%; background:var(--muted); flex:none}
+.verBadge.ok{color:var(--good)} .verBadge.ok .dot{background:var(--good); box-shadow:0 0 6px var(--good)}
+.verBadge.stale{color:#f59e0b} .verBadge.stale .dot{background:#f59e0b; box-shadow:0 0 6px #f59e0b; animation:pulseDot 1.2s ease-in-out infinite}
+.verBadge.unknown{color:var(--muted)}
+@keyframes pulseDot{0%,100%{opacity:1} 50%{opacity:.35}}
+@media (prefers-reduced-motion: reduce){.verBadge.stale .dot{animation:none}}
+.updateBtn.needsUpdate{box-shadow:0 0 0 1px #f59e0b, 0 0 18px rgba(245,158,11,.6), 0 8px 20px -10px rgba(0,0,0,.5)}
 </style>
 </head>
 <body>
@@ -225,6 +237,7 @@ details li{margin:6px 0; font-size:16px}
 <main class="app">
   <h1>🔔 Ringtone Maker</h1>
   <p class="sub">Turn your screen recording into an iPhone ringtone. <span id="buildTag" class="buildTag"></span></p>
+  <button id="verBadge" class="verBadge" type="button"><i class="dot"></i><span class="txt">Checking for updates…</span></button>
 
   <div id="errorBox" class="err hidden" role="alert"></div>
 
@@ -292,6 +305,7 @@ details li{margin:6px 0; font-size:16px}
   <section class="card result hidden" id="result">
     <h2>🎉 Your ringtone is ready!</h2>
     <audio id="resultAudio" controls playsinline></audio>
+    <p class="hint" id="diagLine" style="margin:-6px 0 12px; font-size:13px; opacity:.65"></p>
     <div class="stack">
       <button class="big green" id="saveBtn" type="button">📥 Save to my iPhone</button>
       <button class="mid" id="m4aBtn" type="button">Save as .m4a instead (for GarageBand)</button>
@@ -327,13 +341,12 @@ const MAX = 29;            // stay under Apple's 30s ringtone cap with margin: a
                             // exactly 30.0s can measure slightly over after encoding (frame
                             // padding, recorder tail padding below) and gets silently rejected
 const BIN = 0.01;         // seconds per waveform bin
-const BUILD = '2026-09-30 02:13 UTC';
+const BUILD = '2026-09-30 22:26 UTC';
 
-/* ---------- force-update button ---------- */
+/* ---------- force-update button + live version badge ---------- */
 (function(){
-  const btn = $('updateBtn'), toast = $('updateToast'), tag = $('buildTag');
+  const btn = $('updateBtn'), toast = $('updateToast'), tag = $('buildTag'), badge = $('verBadge');
   if(tag) tag.textContent = 'build ' + BUILD;
-  if(!btn) return;
   let toastTimer = 0;
   function showToast(msg){
     if(!toast) return;
@@ -342,11 +355,9 @@ const BUILD = '2026-09-30 02:13 UTC';
     toast.classList.remove('hidden');
     toastTimer = setTimeout(() => toast.classList.add('hidden'), 2200);
   }
-  btn.addEventListener('click', async () => {
-    if(btn.disabled) return;
-    btn.disabled = true;
-    btn.classList.add('spin');
-    showToast('Checking for the latest version…');
+  async function hardRefresh(){
+    if(btn){ btn.disabled = true; btn.classList.add('spin'); }
+    showToast('Getting the latest version…');
     try{
       if('serviceWorker' in navigator){
         const regs = await navigator.serviceWorker.getRegistrations();
@@ -360,7 +371,39 @@ const BUILD = '2026-09-30 02:13 UTC';
     const url = new URL(location.href);
     url.searchParams.set('_r', Date.now().toString(36));
     location.replace(url.toString());
-  });
+  }
+  if(btn) btn.addEventListener('click', () => { if(!btn.disabled) hardRefresh(); });
+
+  function setBadge(state, text){
+    if(!badge) return;
+    badge.classList.remove('ok','stale','unknown');
+    badge.classList.add(state);
+    badge.querySelector('.txt').textContent = text;
+    if(btn) btn.classList.toggle('needsUpdate', state === 'stale');
+  }
+  async function checkForUpdate(){
+    if(!badge) return;
+    try{
+      const url = new URL(location.pathname, location.href);
+      url.searchParams.set('_v', Date.now().toString(36));
+      const resp = await fetch(url.toString(), {cache:'no-store'});
+      if(!resp.ok) throw new Error('bad status');
+      const html = await resp.text();
+      const m = html.match(/const BUILD = '([^']+)'/);
+      if(!m) throw new Error('no build marker');
+      if(m[1] === BUILD) setBadge('ok', 'Up to date');
+      else setBadge('stale', 'Update available — tap to refresh');
+    }catch(e){
+      setBadge('unknown', "Can't check for updates right now");
+    }
+  }
+  if(badge){
+    badge.addEventListener('click', () => {
+      if(badge.classList.contains('stale')) hardRefresh();
+      else checkForUpdate();
+    });
+    setTimeout(checkForUpdate, 900);
+  }
 })();
 
 let ac = null, audioBuf = null, peaks = null, baseName = 'My Ringtone';
@@ -646,6 +689,45 @@ async function encodeWebCodecs(L, R, sr, progress){
   return muxer.target.buffer;
 }
 
+// Reads the moov/mvhd box to report whether the output actually has a readable, correct duration
+// header and whether the container is fragmented (has a moof box) -- the two things iOS's ringtone
+// playback path (per Apple's own sysdiagnose logs for a related CallKit bug) is known to be picky
+// about: a fragmented or duration-less file gets silently swapped for the default ringtone.
+function describeOutput(buf, usedPath){
+  try{
+    const dv = new DataView(buf), bytes = new Uint8Array(buf);
+    let o = 0, moov = null, fragmented = false;
+    while(o + 8 <= buf.byteLength){
+      const size = dv.getUint32(o);
+      const type = String.fromCharCode(bytes[o+4],bytes[o+5],bytes[o+6],bytes[o+7]);
+      if(type === 'moov') moov = {start:o+8, end:o+size};
+      if(type === 'moof') fragmented = true;
+      if(size <= 0) break;
+      o += size;
+    }
+    let durText = 'n/a';
+    if(moov){
+      let mo = moov.start;
+      while(mo + 8 <= moov.end){
+        const size = dv.getUint32(mo);
+        const type = String.fromCharCode(bytes[mo+4],bytes[mo+5],bytes[mo+6],bytes[mo+7]);
+        if(type === 'mvhd'){
+          let p = mo + 8;
+          const version = bytes[p]; p += 4;
+          let timescale, duration;
+          if(version === 1){ p += 16; timescale = dv.getUint32(p); p += 4; duration = Number(dv.getBigUint64(p)); }
+          else { p += 8; timescale = dv.getUint32(p); p += 4; duration = dv.getUint32(p); }
+          durText = timescale ? (duration/timescale).toFixed(2) + 's' : 'zero timescale';
+          break;
+        }
+        if(size <= 0) break;
+        mo += size;
+      }
+    }
+    return usedPath + ', ' + (fragmented ? 'FRAGMENTED' : 'flat') + ', mvhd=' + durText + ', ' + buf.byteLength + 'B';
+  }catch(e){ return usedPath + ' (diag parse failed: ' + e.message + ')'; }
+}
+
 function nativeRecorderMime(){
   if(!window.MediaRecorder) return null;
   return ['audio/mp4;codecs=mp4a.40.2','audio/mp4','audio/aac'].find(m => MediaRecorder.isTypeSupported(m)) || null;
@@ -680,7 +762,7 @@ $('makeBtn').addEventListener('click', async () => {
   const progress = p => { fill.style.width = Math.round(p*100)+'%'; };
   try{
     const {L, R, sr, seconds} = sliceAudio();
-    let buf;
+    let buf, usedPath;
     // WebCodecs + mp4-muxer (fastStart:'in-memory') writes a traditional flat MP4 with a complete
     // sample table up front -- the same structure GarageBand/iTunes-era ringtones have always used.
     // MediaRecorder's MP4 output is built incrementally as chunks arrive, which makes it a fragmented
@@ -692,16 +774,19 @@ $('makeBtn').addEventListener('click', async () => {
     try{
       $('makingText').textContent = 'Making your ringtone…';
       buf = await encodeWebCodecs(L, R, sr, progress);
+      usedPath = 'webcodecs';
     }catch(e1){
       console.warn('WebCodecs path failed, trying recorder', e1);
       $('makingText').textContent = 'Making your ringtone… this takes about ' + Math.ceil(seconds) + ' seconds. Keep this screen open!';
       buf = await encodeRecorder(L, R, sr, progress, seconds);
+      usedPath = 'recorder';
     }
     progress(1);
     if(resultUrl) URL.revokeObjectURL(resultUrl);
     resultBlob = new Blob([buf], {type:'audio/mp4'});
     resultUrl = URL.createObjectURL(resultBlob);
     $('resultAudio').src = resultUrl;
+    $('diagLine').textContent = 'Debug: ' + describeOutput(buf, usedPath);
     $('b3').classList.add('done'); $('b3').textContent = '✓';
     $('stepTrim').classList.add('hidden'); $('stepMake').classList.add('hidden');
     $('result').classList.remove('hidden');
