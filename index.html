@@ -267,7 +267,7 @@ details li{margin:6px 0; font-size:16px}
     <div class="times">
       <div><span>Starts</span><b id="tStart">0:00</b></div>
       <div class="len" id="lenBox"><span>Length</span><b id="tLen">0.0s</b></div>
-      <div><span>Ends</span><b id="tEnd">0:30</b></div>
+      <div><span>Ends</span><b id="tEnd">0:29</b></div>
     </div>
 
     <button class="big blue" id="playBtn" type="button">▶️ Listen</button>
@@ -278,7 +278,7 @@ details li{margin:6px 0; font-size:16px}
       <span class="t" id="switchText">Use only my glowing part</span>
     </label>
     <div class="note hidden" id="longNote"></div>
-    <div class="hint" style="margin-top:10px">Ringtones can be 30 seconds at most.</div>
+    <div class="hint" style="margin-top:10px">Ringtones can be 29 seconds at most.</div>
   </section>
 
   <!-- STEP 3 -->
@@ -302,10 +302,10 @@ details li{margin:6px 0; font-size:16px}
       <ol>
         <li>Tap <b>Save to my iPhone</b> and choose <b>Save to Files</b>.</li>
         <li>Open the <b>Files</b> app and tap your ringtone.</li>
-        <li>Tap the <b>Share</b> button, then <b>Use as Ringtone</b>. (If you don't see it, tap <b>More</b>.)</li>
-        <li>Done! Find it in <b>Settings &gt; Sounds &amp; Haptics &gt; Ringtone</b>.</li>
+        <li>Tap the <b>Share</b> button, then <b>Use as Ringtone</b>. (Don't see it? Scroll down, tap <b>Edit Actions…</b>, and turn it on.)</li>
+        <li>This opens your <b>Ringtone</b> list — <b>tap your new tone in that list</b> so a checkmark appears next to it. That checkmark is what actually makes it your ringtone; just tapping "Use as Ringtone" in step 3 isn't enough on its own.</li>
       </ol>
-      <p class="hint" style="margin:0 0 12px">Don't see <b>Use as Ringtone</b>? Tap <b>Save as .m4a instead</b> above and try again with that file.</p>
+      <p class="hint" style="margin:0 0 12px">Still hearing your old ringtone? Go to <b>Settings &gt; Sounds &amp; Haptics &gt; Ringtone</b> and check your tone is the one with the checkmark. Don't see <b>Use as Ringtone</b> at all? Tap <b>Save as .m4a instead</b> above and try again with that file.</p>
       <p class="hint" style="margin:0 0 6px"><b>Older iPhone (iOS 25 or older)</b></p>
       <ol>
         <li>Save to Files, then open the free <b>GarageBand</b> app and start a new <b>Audio Recorder</b> song.</li>
@@ -323,9 +323,11 @@ details li{margin:6px 0; font-size:16px}
 (function(){
 'use strict';
 const $ = id => document.getElementById(id);
-const MAX = 30;           // iPhone ringtone limit in seconds
+const MAX = 29;            // stay under Apple's 30s ringtone cap with margin: a clip timed at
+                            // exactly 30.0s can measure slightly over after encoding (frame
+                            // padding, recorder tail padding below) and gets silently rejected
 const BIN = 0.01;         // seconds per waveform bin
-const BUILD = '2026-09-30 01:45 UTC';
+const BUILD = '2026-09-30 02:06 UTC';
 
 /* ---------- force-update button ---------- */
 (function(){
@@ -362,7 +364,7 @@ const BUILD = '2026-09-30 01:45 UTC';
 })();
 
 let ac = null, audioBuf = null, peaks = null, baseName = 'My Ringtone';
-let sel = {s:0, e:30}, view = {s:0, e:60};
+let sel = {s:0, e:29}, view = {s:0, e:60};
 let src = null, raf = 0, resultBlob = null, resultUrl = null;
 
 const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
@@ -499,7 +501,7 @@ function updateTimes(){
   const on = $('useTrim').checked, D = audioBuf.duration;
   $('switchText').textContent = on ? 'Use only my glowing part' : 'Use the whole sound';
   const note = $('longNote');
-  if(!on && D > MAX){ note.textContent = 'The whole sound is longer than 30 seconds, so I will use just the first 30 seconds.'; note.classList.remove('hidden'); }
+  if(!on && D > MAX){ note.textContent = 'The whole sound is longer than 29 seconds, so I will use just the first 29 seconds.'; note.classList.remove('hidden'); }
   else note.classList.add('hidden');
 }
 function updatePan(){
@@ -665,7 +667,7 @@ async function encodeRecorder(L, R, sr, progress, seconds){
     const t0 = a.currentTime;
     const iv = setInterval(() => progress(Math.min(.99, (a.currentTime - t0)/seconds)), 200);
     rec.start();
-    s.onended = () => setTimeout(() => rec.stop(), 250);
+    s.onended = () => setTimeout(() => rec.stop(), 120);
     s.start();
   });
 }
