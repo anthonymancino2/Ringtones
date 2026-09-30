@@ -325,7 +325,7 @@ details li{margin:6px 0; font-size:16px}
 const $ = id => document.getElementById(id);
 const MAX = 30;           // iPhone ringtone limit in seconds
 const BIN = 0.01;         // seconds per waveform bin
-const BUILD = '2026-09-30 01:37 UTC';
+const BUILD = '2026-09-30 01:45 UTC';
 
 /* ---------- force-update button ---------- */
 (function(){
@@ -386,6 +386,7 @@ $('fileInput').addEventListener('change', async e => {
     const ab = await f.arrayBuffer();
     audioBuf = await decode(ab);
     if(!audioBuf || audioBuf.duration < 0.5) throw new Error('short');
+    audioBuf = await toRingtoneRate(audioBuf);   // iOS ringtone import expects a standard sample rate
     peaks = computePeaks(audioBuf);
     $('fileName').textContent = '🎬 ' + (f.name || 'Your file') + ' (' + fmt(audioBuf.duration).replace(/\.\d$/,'') + ')';
     $('fileName').classList.remove('hidden');
@@ -409,6 +410,19 @@ function decode(ab){
     const p = getAC().decodeAudioData(ab, res, rej);
     if(p && p.catch) p.catch(rej);
   });
+}
+const RINGTONE_RATE = 44100; // iOS's ringtone importer expects a standard rate (44.1/48kHz); screen
+                              // recordings and odd sources can decode at other rates, which can make
+                              // iOS silently refuse the tone and keep whatever was set before.
+async function toRingtoneRate(buf){
+  if(buf.sampleRate === RINGTONE_RATE) return buf;
+  const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if(!OfflineCtx) return buf;
+  const frames = Math.max(1, Math.ceil(buf.duration * RINGTONE_RATE));
+  const ctx = new OfflineCtx(buf.numberOfChannels, frames, RINGTONE_RATE);
+  const src = ctx.createBufferSource();
+  src.buffer = buf; src.connect(ctx.destination); src.start(0);
+  return await ctx.startRendering();
 }
 function computePeaks(buf){
   const n = buf.length, sr = buf.sampleRate, step = Math.max(1, Math.floor(sr*BIN));
@@ -630,9 +644,12 @@ async function encodeWebCodecs(L, R, sr, progress){
   return muxer.target.buffer;
 }
 
+function nativeRecorderMime(){
+  if(!window.MediaRecorder) return null;
+  return ['audio/mp4;codecs=mp4a.40.2','audio/mp4','audio/aac'].find(m => MediaRecorder.isTypeSupported(m)) || null;
+}
 async function encodeRecorder(L, R, sr, progress, seconds){
-  if(!window.MediaRecorder) throw new Error('no-recorder');
-  const mime = ['audio/mp4;codecs=mp4a.40.2','audio/mp4','audio/aac'].find(m => MediaRecorder.isTypeSupported(m));
+  const mime = nativeRecorderMime();
   if(!mime) throw new Error('no-mp4');
   const a = getAC(); try{ await a.resume(); }catch(_){}
   const buf = a.createBuffer(2, L.length, sr);
@@ -662,13 +679,27 @@ $('makeBtn').addEventListener('click', async () => {
   try{
     const {L, R, sr, seconds} = sliceAudio();
     let buf;
-    try{
-      $('makingText').textContent = 'Making your ringtone…';
-      buf = await encodeWebCodecs(L, R, sr, progress);
-    }catch(e1){
-      console.warn('WebCodecs path failed, trying recorder', e1);
-      $('makingText').textContent = 'Making your ringtone… this takes about ' + Math.ceil(seconds) + ' seconds. Keep this screen open!';
-      buf = await encodeRecorder(L, R, sr, progress, seconds);
+    // Safari's own MediaRecorder produces AAC/MP4 straight from AVFoundation, so on Safari it's the
+    // safer bet for a file iOS will actually accept as a ringtone. Elsewhere (Chrome/Firefox don't
+    // support MediaRecorder audio/mp4 at all) WebCodecs + mp4-muxer is the only way to get AAC/MP4.
+    if(nativeRecorderMime()){
+      try{
+        $('makingText').textContent = 'Making your ringtone… this takes about ' + Math.ceil(seconds) + ' seconds. Keep this screen open!';
+        buf = await encodeRecorder(L, R, sr, progress, seconds);
+      }catch(e1){
+        console.warn('Native recorder path failed, trying WebCodecs', e1);
+        $('makingText').textContent = 'Making your ringtone…';
+        buf = await encodeWebCodecs(L, R, sr, progress);
+      }
+    } else {
+      try{
+        $('makingText').textContent = 'Making your ringtone…';
+        buf = await encodeWebCodecs(L, R, sr, progress);
+      }catch(e1){
+        console.warn('WebCodecs path failed, trying recorder', e1);
+        $('makingText').textContent = 'Making your ringtone… this takes about ' + Math.ceil(seconds) + ' seconds. Keep this screen open!';
+        buf = await encodeRecorder(L, R, sr, progress, seconds);
+      }
     }
     progress(1);
     if(resultUrl) URL.revokeObjectURL(resultUrl);
