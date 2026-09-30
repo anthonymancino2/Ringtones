@@ -189,12 +189,42 @@ details li{margin:6px 0; font-size:16px}
 .err{background:#ffe1de; color:#7a1610; border:1px solid rgba(122,22,16,.15); border-radius:16px; padding:14px; margin:0 0 14px; font-size:17px}
 :root[data-theme="dark"] .err{background:#3a1220; color:#ffb4c6; border-color:rgba(244,63,94,.4)}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .err{background:#3a1220; color:#ffb4c6; border-color:rgba(244,63,94,.4)}}
+
+/* update button */
+.updateBtn{
+  position:fixed; top:calc(env(safe-area-inset-top,0px) + 14px); right:16px; z-index:60;
+  width:44px; height:44px; border:1px solid var(--line); border-radius:50%;
+  background:var(--card); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  display:grid; place-items:center; padding:0;
+  box-shadow:0 0 14px var(--glow1), 0 8px 20px -10px rgba(0,0,0,.5);
+  transition:transform .15s ease, box-shadow .15s ease;
+}
+.updateBtn:active{transform:scale(.92) rotate(-25deg)}
+.updateBtn.spin svg{animation:updSpin .8s linear infinite}
+@keyframes updSpin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.updateBtn.spin svg{animation-duration:2s}}
+.updateToast{
+  position:fixed; top:calc(env(safe-area-inset-top,0px) + 66px); right:16px; z-index:60;
+  max-width:240px; font-size:14px; font-weight:600; text-align:right; color:var(--ink);
+  background:var(--card); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  border:1px solid var(--line); border-radius:12px; padding:8px 12px;
+  box-shadow:0 8px 20px -10px rgba(0,0,0,.5);
+}
+.buildTag{display:block; margin-top:2px; font-size:12px; color:var(--muted); opacity:.7; letter-spacing:.02em}
 </style>
 </head>
 <body>
+<button id="updateBtn" class="updateBtn" type="button" title="Force refresh to the latest version" aria-label="Force refresh to the latest version">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="url(#updGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <defs><linearGradient id="updGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs>
+    <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+    <path d="M21 3v6h-6"/>
+  </svg>
+</button>
+<div id="updateToast" class="updateToast hidden"></div>
 <main class="app">
   <h1>🔔 Ringtone Maker</h1>
-  <p class="sub">Turn your screen recording into an iPhone ringtone.</p>
+  <p class="sub">Turn your screen recording into an iPhone ringtone. <span id="buildTag" class="buildTag"></span></p>
 
   <div id="errorBox" class="err hidden" role="alert"></div>
 
@@ -295,6 +325,41 @@ details li{margin:6px 0; font-size:16px}
 const $ = id => document.getElementById(id);
 const MAX = 30;           // iPhone ringtone limit in seconds
 const BIN = 0.01;         // seconds per waveform bin
+const BUILD = '2026-09-30 01:37 UTC';
+
+/* ---------- force-update button ---------- */
+(function(){
+  const btn = $('updateBtn'), toast = $('updateToast'), tag = $('buildTag');
+  if(tag) tag.textContent = 'build ' + BUILD;
+  if(!btn) return;
+  let toastTimer = 0;
+  function showToast(msg){
+    if(!toast) return;
+    clearTimeout(toastTimer);
+    toast.textContent = msg;
+    toast.classList.remove('hidden');
+    toastTimer = setTimeout(() => toast.classList.add('hidden'), 2200);
+  }
+  btn.addEventListener('click', async () => {
+    if(btn.disabled) return;
+    btn.disabled = true;
+    btn.classList.add('spin');
+    showToast('Checking for the latest version…');
+    try{
+      if('serviceWorker' in navigator){
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+      if('caches' in window){
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    }catch(_){ /* best-effort */ }
+    const url = new URL(location.href);
+    url.searchParams.set('_r', Date.now().toString(36));
+    location.replace(url.toString());
+  });
+})();
 
 let ac = null, audioBuf = null, peaks = null, baseName = 'My Ringtone';
 let sel = {s:0, e:30}, view = {s:0, e:60};
