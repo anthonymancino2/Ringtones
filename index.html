@@ -327,7 +327,7 @@ const MAX = 29;            // stay under Apple's 30s ringtone cap with margin: a
                             // exactly 30.0s can measure slightly over after encoding (frame
                             // padding, recorder tail padding below) and gets silently rejected
 const BIN = 0.01;         // seconds per waveform bin
-const BUILD = '2026-09-30 02:06 UTC';
+const BUILD = '2026-09-30 02:13 UTC';
 
 /* ---------- force-update button ---------- */
 (function(){
@@ -681,27 +681,21 @@ $('makeBtn').addEventListener('click', async () => {
   try{
     const {L, R, sr, seconds} = sliceAudio();
     let buf;
-    // Safari's own MediaRecorder produces AAC/MP4 straight from AVFoundation, so on Safari it's the
-    // safer bet for a file iOS will actually accept as a ringtone. Elsewhere (Chrome/Firefox don't
-    // support MediaRecorder audio/mp4 at all) WebCodecs + mp4-muxer is the only way to get AAC/MP4.
-    if(nativeRecorderMime()){
-      try{
-        $('makingText').textContent = 'Making your ringtone… this takes about ' + Math.ceil(seconds) + ' seconds. Keep this screen open!';
-        buf = await encodeRecorder(L, R, sr, progress, seconds);
-      }catch(e1){
-        console.warn('Native recorder path failed, trying WebCodecs', e1);
-        $('makingText').textContent = 'Making your ringtone…';
-        buf = await encodeWebCodecs(L, R, sr, progress);
-      }
-    } else {
-      try{
-        $('makingText').textContent = 'Making your ringtone…';
-        buf = await encodeWebCodecs(L, R, sr, progress);
-      }catch(e1){
-        console.warn('WebCodecs path failed, trying recorder', e1);
-        $('makingText').textContent = 'Making your ringtone… this takes about ' + Math.ceil(seconds) + ' seconds. Keep this screen open!';
-        buf = await encodeRecorder(L, R, sr, progress, seconds);
-      }
+    // WebCodecs + mp4-muxer (fastStart:'in-memory') writes a traditional flat MP4 with a complete
+    // sample table up front -- the same structure GarageBand/iTunes-era ringtones have always used.
+    // MediaRecorder's MP4 output is built incrementally as chunks arrive, which makes it a fragmented
+    // MP4 (moov with empty tables + moof/mdat fragments). Both are valid, playable MP4, but iOS's
+    // ringtone import/preview path is pickier than a general media player: a fragmented file can get
+    // accepted into the Ringtone list (lenient check) yet fail on actual preview/ring playback,
+    // silently keeping whatever tone was already active. So prefer the flat-MP4 path here and only
+    // fall back to the recorder for browsers that can't do WebCodecs AAC at all.
+    try{
+      $('makingText').textContent = 'Making your ringtone…';
+      buf = await encodeWebCodecs(L, R, sr, progress);
+    }catch(e1){
+      console.warn('WebCodecs path failed, trying recorder', e1);
+      $('makingText').textContent = 'Making your ringtone… this takes about ' + Math.ceil(seconds) + ' seconds. Keep this screen open!';
+      buf = await encodeRecorder(L, R, sr, progress, seconds);
     }
     progress(1);
     if(resultUrl) URL.revokeObjectURL(resultUrl);
