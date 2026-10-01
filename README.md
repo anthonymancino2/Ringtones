@@ -13,6 +13,8 @@ Turn an iPhone screen recording (or any video/audio clip) into a real iPhone rin
 
 Everything happens on-device. The file never leaves your phone or computer.
 
+There's also a dark mode toggle (top-left) — follows your system setting by default, or tap it to force light/dark regardless of system preference (remembered for next time).
+
 ## Why isn't there a "Set as Ringtone" button?
 
 Because Apple doesn't allow it. There is no web API that lets a Safari page reach into iOS system settings and change your ringtone — that's a deliberate sandboxing restriction, not a limitation of this app. No browser-based tool, on any platform, can do it either.
