@@ -168,6 +168,19 @@ input[type=range]{width:100%; height:44px; accent-color:var(--c1); margin:4px 0}
 .switch .t{font-weight:600; font-size:17px; line-height:1.15}
 .note{background:var(--warn); color:var(--warn-ink); border-radius:16px; padding:12px 14px; margin-top:12px; font-size:16px}
 
+/* fade in/out */
+.fadeRow{display:flex; gap:10px; margin-top:12px}
+.chip{
+  flex:1; position:relative; display:flex; align-items:center; justify-content:center; gap:6px;
+  padding:11px 10px; border:1px solid var(--line); border-radius:14px; background:var(--wavebg);
+  cursor:pointer; font-weight:600; font-size:15px; transition:box-shadow .15s ease, background .15s ease, color .15s ease;
+}
+.chip input{position:absolute; opacity:0; width:1px; height:1px}
+.chip.on{background:linear-gradient(120deg,var(--c1),var(--c2)); color:var(--blue-ink); box-shadow:0 0 14px var(--glow1)}
+.chip input:focus-visible{outline:none}
+.chip:has(input:focus-visible){outline:2px solid var(--c1); outline-offset:2px}
+.fadeLenWrap{margin-top:10px}
+
 /* loading + result */
 .busy{text-align:center; padding:26px 8px}
 .spin{
@@ -291,6 +304,22 @@ details li{margin:6px 0; font-size:16px}
       <span class="t" id="switchText">Use only my glowing part</span>
     </label>
     <div class="note hidden" id="longNote"></div>
+
+    <div class="fadeRow">
+      <label class="chip" id="fadeInChip">
+        <input type="checkbox" id="fadeIn">
+        <span>↗️ Fade in</span>
+      </label>
+      <label class="chip" id="fadeOutChip">
+        <input type="checkbox" id="fadeOut">
+        <span>↘️ Fade out</span>
+      </label>
+    </div>
+    <div class="fadeLenWrap hidden" id="fadeLenWrap">
+      <input type="range" id="fadeLen" min="0.2" max="3" step="0.1" value="1">
+      <p class="hint" style="text-align:center;margin:0">Fade length: <b id="fadeLenText">1.0s</b></p>
+    </div>
+
     <div class="hint" style="margin-top:10px">Ringtones can be 29 seconds at most.</div>
   </section>
 
@@ -341,7 +370,7 @@ const MAX = 29;            // stay under Apple's 30s ringtone cap with margin: a
                             // exactly 30.0s can measure slightly over after encoding (frame
                             // padding, recorder tail padding below) and gets silently rejected
 const BIN = 0.01;         // seconds per waveform bin
-const BUILD = '2026-09-30 22:56 UTC';
+const BUILD = '2026-10-01 00:05 UTC';
 
 /* ---------- force-update button + live version badge ---------- */
 (function(){
@@ -574,6 +603,17 @@ $('pan').addEventListener('input', e => {
 });
 $('useTrim').addEventListener('change', () => { stopPlay(); render(); });
 
+/* ---------- fade in/out ---------- */
+function updateFadeUI(){
+  const inOn = $('fadeIn').checked, outOn = $('fadeOut').checked;
+  $('fadeInChip').classList.toggle('on', inOn);
+  $('fadeOutChip').classList.toggle('on', outOn);
+  $('fadeLenWrap').classList.toggle('hidden', !inOn && !outOn);
+}
+$('fadeIn').addEventListener('change', updateFadeUI);
+$('fadeOut').addEventListener('change', updateFadeUI);
+$('fadeLen').addEventListener('input', () => { $('fadeLenText').textContent = parseFloat($('fadeLen').value).toFixed(1) + 's'; });
+
 /* drag handling */
 (function(){
   const wv = $('wv');
@@ -629,8 +669,16 @@ $('playBtn').addEventListener('click', async () => {
   if(src){ stopPlay(); return; }
   const a = getAC(); try{ await a.resume(); }catch(_){}
   const r = getRange();
-  const node = a.createBufferSource(); node.buffer = audioBuf; node.connect(a.destination);
-  node.start(0, r.s, r.e - r.s);
+  const dur = r.e - r.s;
+  const node = a.createBufferSource(); node.buffer = audioBuf;
+  const gain = a.createGain(); node.connect(gain); gain.connect(a.destination);
+  const fadeSec = parseFloat($('fadeLen').value) || 1;
+  const fIn = $('fadeIn').checked ? Math.min(fadeSec, dur/2) : 0;
+  const fOut = $('fadeOut').checked ? Math.min(fadeSec, dur/2) : 0;
+  const pt0 = a.currentTime;
+  if(fIn > 0){ gain.gain.setValueAtTime(0, pt0); gain.gain.linearRampToValueAtTime(1, pt0+fIn); }
+  if(fOut > 0){ gain.gain.setValueAtTime(1, pt0+Math.max(fIn,dur-fOut)); gain.gain.linearRampToValueAtTime(0, pt0+dur); }
+  node.start(0, r.s, dur);
   const t0 = a.currentTime; src = node;
   node.onended = () => { if(src === node) stopPlay(); };
   $('playBtn').innerHTML = '⏹️ Stop';
@@ -653,8 +701,13 @@ function sliceAudio(){
   const n = Math.max(1, i1 - i0);
   const L = new Float32Array(audioBuf.getChannelData(0).subarray(i0, i1));
   const R = audioBuf.numberOfChannels > 1 ? new Float32Array(audioBuf.getChannelData(1).subarray(i0, i1)) : new Float32Array(L);
-  const f = Math.min(Math.floor(sr*0.02), Math.floor(n/2));   // tiny fades stop clicks
-  for(let i=0;i<f;i++){ const k = i/f; L[i]*=k; R[i]*=k; L[n-1-i]*=k; R[n-1-i]*=k; }
+  const half = Math.floor(n/2);
+  const click = Math.min(Math.floor(sr*0.02), half);   // tiny fade stops clicks when no user fade is set
+  const fadeSec = parseFloat($('fadeLen').value) || 1;
+  const fIn = $('fadeIn').checked ? Math.min(Math.floor(sr*fadeSec), half) : click;
+  const fOut = $('fadeOut').checked ? Math.min(Math.floor(sr*fadeSec), half) : click;
+  for(let i=0;i<fIn;i++){ const k = i/fIn; L[i]*=k; R[i]*=k; }
+  for(let i=0;i<fOut;i++){ const k = i/fOut; L[n-1-i]*=k; R[n-1-i]*=k; }
   return {L:L, R:R, sr:sr, seconds:n/sr};
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
