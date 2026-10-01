@@ -249,7 +249,7 @@ details li{margin:6px 0; font-size:16px}
 <div id="updateToast" class="updateToast hidden"></div>
 <main class="app">
   <h1>🔔 Ringtone Maker</h1>
-  <p class="sub">Turn your screen recording into an iPhone ringtone. <span id="buildTag" class="buildTag"></span></p>
+  <p class="sub">Turn a video into an iPhone ringtone. <span id="buildTag" class="buildTag"></span></p>
   <button id="verBadge" class="verBadge" type="button"><i class="dot"></i><span class="txt">Checking for updates…</span></button>
 
   <div id="errorBox" class="err hidden" role="alert"></div>
@@ -258,7 +258,8 @@ details li{margin:6px 0; font-size:16px}
   <section class="card" id="stepPick">
     <h2 class="step-title"><span class="badge" id="b1">1</span>Pick your video</h2>
     <button class="big blue" id="pickBtn" type="button">📱 Choose video or sound</button>
-    <input id="fileInput" type="file" accept="video/*,audio/*,.mov,.mp4,.m4a,.mp3,.wav" class="hidden">
+    <input id="fileInput" type="file" accept="video/*,audio/*,.mov,.mp4,.m4a,.mp3,.wav,.webm,.mkv,.avi,.m4v" class="hidden">
+    <p class="hint" id="sourceHint" style="margin:10px 2px 0">Works with screen recordings, and videos you've saved from TikTok, YouTube, or anywhere else.</p>
     <div class="file hidden" id="fileName"></div>
     <div class="busy hidden" id="loading"><div class="spin"></div><div>Getting the sound…</div></div>
   </section>
@@ -370,7 +371,7 @@ const MAX = 29;            // stay under Apple's 30s ringtone cap with margin: a
                             // exactly 30.0s can measure slightly over after encoding (frame
                             // padding, recorder tail padding below) and gets silently rejected
 const BIN = 0.01;         // seconds per waveform bin
-const BUILD = '2026-10-01 00:05 UTC';
+const BUILD = '2026-10-01 00:47 UTC';
 
 /* ---------- force-update button + live version badge ---------- */
 (function(){
@@ -473,7 +474,10 @@ $('fileInput').addEventListener('change', async e => {
     audioBuf = null;
     $('pickBtn').textContent = '📱 Choose video or sound';
     $('pickBtn').classList.remove('hidden');
-    showError("I couldn't find any sound in that file. Make sure your screen recording had sound on, then try again.");
+    const isWebm = /\.webm$/i.test(f.name || '');
+    showError(isWebm
+      ? "This browser couldn't read that .webm file's audio -- that format (common for YouTube downloads) isn't well supported on iPhone. If you can, re-save or convert it to .mp4 first and try again."
+      : "I couldn't find any sound in that file. Make sure it has audio, then try again -- if it's a video you downloaded from somewhere, try picking the original file rather than a re-shared copy.");
   }finally{
     $('loading').classList.add('hidden');
     $('fileInput').value = '';

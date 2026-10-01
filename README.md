@@ -6,7 +6,7 @@ Turn an iPhone screen recording (or any video/audio clip) into a real iPhone rin
 
 ## What it does
 
-1. **Pick a video or audio file** — including screen recordings straight from your Photos app.
+1. **Pick a video or audio file** — a screen recording, or a video you've already saved from TikTok, YouTube, or anywhere else (`.mp4`/`.mov` work best; `.webm`, common for some YouTube downloads, isn't well supported on iPhone — convert to `.mp4` first if you hit that). This does **not** fetch or download anything from TikTok/YouTube itself — pick a file already on your device.
 2. **Trim it** on a live, glowing waveform. Drag the region or its handles; ringtones are capped at 29 seconds — just under Apple's 30s hard limit, since a clip timed at exactly 30.0s can measure slightly over after encoding and get silently rejected. Optionally add a **fade in** and/or **fade out** (independent toggles, shared length slider, 0.2–3s) — the "Listen" preview plays the fade too, so you can dial it in before exporting.
 3. **Convert** the selection to AAC audio in a proper `.m4r`/`.m4a` container using a bundled copy of [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm) — the same encoder countless working "make an M4R" tools rely on, run entirely client-side. (Lighter browser-native paths — WebCodecs, then `MediaRecorder` — are kept as a fallback if ffmpeg.wasm can't load.)
 4. **Save it** — either through the native iOS share sheet (AirDrop, Files, Messages, Mail) or as a direct download.
